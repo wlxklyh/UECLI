@@ -56,6 +56,9 @@ private:
     TSharedPtr<FJsonObject> HandleSaveCurrentLevel(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleCreateNewLevel(const TSharedPtr<FJsonObject>& Params);
 
+    // PostProcessVolume commands
+    TSharedPtr<FJsonObject> HandleSetPPVMaterial(const TSharedPtr<FJsonObject>& Params);
+
     // Helper to find actor by name
     AActor* FindActorByName(const FString& ActorName);
 }; 

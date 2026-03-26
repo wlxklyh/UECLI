@@ -209,6 +209,54 @@ bool FUECLICommonUtils::SetObjectProperty(UObject* Object, const FString& Proper
         return false;
     }
 
+    // Handle dot-path properties (e.g., "Settings.WeightedBlendables.Array")
+    if (PropertyName.Contains(TEXT(".")))
+    {
+        TArray<FString> PathParts;
+        PropertyName.ParseIntoArray(PathParts, TEXT("."));
+
+        UStruct* CurrentStruct = Object->GetClass();
+        void* CurrentContainer = Object;
+
+        for (int32 i = 0; i < PathParts.Num() - 1; ++i)
+        {
+            FProperty* SubProp = CurrentStruct->FindPropertyByName(*PathParts[i]);
+            if (!SubProp)
+            {
+                OutErrorMessage = FString::Printf(TEXT("Property not found in path: %s (at segment '%s')"), *PropertyName, *PathParts[i]);
+                return false;
+            }
+
+            FStructProperty* StructProp = CastField<FStructProperty>(SubProp);
+            if (!StructProp)
+            {
+                OutErrorMessage = FString::Printf(TEXT("Property '%s' is not a struct, cannot traverse further"), *PathParts[i]);
+                return false;
+            }
+
+            CurrentContainer = SubProp->ContainerPtrToValuePtr<void>(CurrentContainer);
+            CurrentStruct = StructProp->Struct;
+        }
+
+        // Now find and set the final property
+        const FString& FinalPropName = PathParts.Last();
+        FProperty* FinalProp = CurrentStruct->FindPropertyByName(*FinalPropName);
+        if (!FinalProp)
+        {
+            OutErrorMessage = FString::Printf(TEXT("Final property not found: %s"), *FinalPropName);
+            return false;
+        }
+
+        void* FinalAddr = FinalProp->ContainerPtrToValuePtr<void>(CurrentContainer);
+        FText ImportError;
+        if (FJsonObjectConverter::JsonValueToUProperty(Value, FinalProp, FinalAddr, 0, 0, false, &ImportError))
+        {
+            return true;
+        }
+        OutErrorMessage = FString::Printf(TEXT("Failed to set dot-path property '%s': %s"), *PropertyName, *ImportError.ToString());
+        return false;
+    }
+
     FProperty* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
     if (!Property)
     {

@@ -127,6 +127,16 @@ private:
     TSharedPtr<FJsonObject> HandleGetOpenedMaterial(const TSharedPtr<FJsonObject>& Params);
 
     /**
+     * Open a material in the Material Editor
+     * @param Params - Must include:
+     *                "material_path" - Path to material asset
+     *                Optional:
+     *                "focus" - Whether to bring window to front (default: true)
+     * @return JSON object with opened editor details
+     */
+    TSharedPtr<FJsonObject> HandleOpenMaterialEditor(const TSharedPtr<FJsonObject>& Params);
+
+    /**
      * Get all expression nodes in a material graph
      * @param Params - Must include:
      *                "material_path" - Path to material (or empty to use currently opened)

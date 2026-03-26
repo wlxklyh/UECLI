@@ -16,6 +16,8 @@
 #include "Blueprint/TG_BlueprintFunctionLibrary.h"
 #include "Editor.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Containers/Ticker.h"
+#include "Async/Future.h"
 
 // Expression types - Procedural
 #include "Expressions/Procedural/TG_Expression_Noise.h"
@@ -568,37 +570,62 @@ TSharedPtr<FJsonObject> FUECLITextureGraphCommands::HandleExportTextureGraph(con
 	UTextureGraph* TG = LoadTextureGraph(TGPath);
 	if (!TG) return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("TextureGraph not found: %s"), *TGPath));
 
-	// Call RenderTextureGraph via reflection (not exported from TextureGraph module)
-	UFunction* RenderFunc = UTG_BlueprintFunctionLibrary::StaticClass()->FindFunctionByName(TEXT("RenderTextureGraph"));
+	// ExportTextureGraph triggers render tasks that conflict with the UECLI command dispatch
+	// (AsyncTask(GameThread) + Future.Get() pattern causes TaskGraph recursion).
+	// Solution: schedule the export on the next editor tick via FTSTicker, return immediately.
+	// Client should use async_execute + get_task_result to poll, or just wait and check assets.
+
 	UFunction* ExportFunc = UTG_BlueprintFunctionLibrary::StaticClass()->FindFunctionByName(TEXT("ExportTextureGraph"));
-
-	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-	int32 RenderTargetsCount = 0;
-
-	if (RenderFunc)
+	if (!ExportFunc)
 	{
-		struct { UObject* WorldContext; UTextureGraphBase* InTG; TArray<UTextureRenderTarget2D*> ReturnValue; } RenderParams;
-		RenderParams.WorldContext = World;
-		RenderParams.InTG = TG;
-		UTG_BlueprintFunctionLibrary::StaticClass()->GetDefaultObject()->ProcessEvent(RenderFunc, &RenderParams);
-		RenderTargetsCount = RenderParams.ReturnValue.Num();
+		return FUECLICommonUtils::CreateErrorResponse(TEXT("ExportTextureGraph function not found via reflection"));
 	}
 
-	if (ExportFunc)
-	{
-		struct { UObject* WorldContext; UTextureGraphBase* InTG; bool bOverwrite; bool bSave; bool bExportAll; } ExportParams;
-		ExportParams.WorldContext = World;
-		ExportParams.InTG = TG;
-		ExportParams.bOverwrite = bOverwrite;
-		ExportParams.bSave = bSave;
-		ExportParams.bExportAll = bExportAll;
-		UTG_BlueprintFunctionLibrary::StaticClass()->GetDefaultObject()->ProcessEvent(ExportFunc, &ExportParams);
-	}
+	TWeakObjectPtr<UTextureGraph> WeakTG(TG);
+	bool bLocalOverwrite = bOverwrite;
+	bool bLocalSave = bSave;
+	bool bLocalExportAll = bExportAll;
+	FString LocalTGPath = TGPath;
 
+	// Schedule on next tick — outside the AsyncTask(GameThread) call stack
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
+		[WeakTG, ExportFunc, bLocalOverwrite, bLocalSave, bLocalExportAll, LocalTGPath](float) -> bool
+		{
+			UTextureGraph* PinnedTG = WeakTG.Get();
+			if (!PinnedTG)
+			{
+				UE_LOG(LogTemp, Error, TEXT("[UECLI] export_texture_graph: TextureGraph was garbage collected"));
+				return false;
+			}
+
+			UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+			UObject* CDO = UTG_BlueprintFunctionLibrary::StaticClass()->GetDefaultObject();
+
+			struct
+			{
+				UObject* WorldContextObject;
+				UTextureGraphBase* InTextureGraph;
+				bool bOverwriteTextures;
+				bool bSave;
+				bool bExportAll;
+			} Params;
+			Params.WorldContextObject = World;
+			Params.InTextureGraph = PinnedTG;
+			Params.bOverwriteTextures = bLocalOverwrite;
+			Params.bSave = bLocalSave;
+			Params.bExportAll = bLocalExportAll;
+
+			UE_LOG(LogTemp, Display, TEXT("[UECLI] export_texture_graph: Exporting %s on editor tick"), *LocalTGPath);
+			CDO->ProcessEvent(ExportFunc, &Params);
+			UE_LOG(LogTemp, Display, TEXT("[UECLI] export_texture_graph: Export completed for %s"), *LocalTGPath);
+			return false; // one-shot
+		}), 0.1f); // small delay to ensure we're outside the command dispatch stack
+
+	// Return immediately — export happens asynchronously on next tick
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("tg_path"), TGPath);
-	Data->SetNumberField(TEXT("render_targets_count"), RenderTargetsCount);
-	Data->SetBoolField(TEXT("exported"), ExportFunc != nullptr);
+	Data->SetBoolField(TEXT("scheduled"), true);
+	Data->SetStringField(TEXT("note"), TEXT("Export scheduled for next editor tick. Check /Game/ for exported Texture2D assets after a few seconds."));
 	return FUECLICommonUtils::CreateSuccessResponse(Data);
 }
 

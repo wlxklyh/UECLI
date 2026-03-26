@@ -127,6 +127,62 @@ Source/UECLI/
 └── Private/ （与 Public 对应）
 ```
 
+## 样例：后处理效果一键生成
+
+通过 `Create-PPEffects.ps1` 脚本，UECLI 可以一次性创建 10 种后处理材质、自动切换并截图。整个过程无需手动操作，展示了 **材质创建 → 节点连线 → 编译 → PPV 挂载 → 截图** 的完整自动化链路。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Plugins/UECLI/Scripts/Create-PPEffects.ps1
+```
+
+### 效果一览
+
+| 原始画面 | |
+|:---:|:---:|
+| ![Baseline](Sample/PP_00_Baseline.png) | |
+
+| 01 · Desaturate（去饱和） | 02 · Warm Tint（暖色调） |
+|:---:|:---:|
+| ![Desaturate](Sample/PP_01_Desaturate.png) | ![WarmTint](Sample/PP_02_WarmTint.png) |
+
+| 03 · Invert（反色） | 04 · Vignette（暗角） |
+|:---:|:---:|
+| ![Invert](Sample/PP_03_Invert.png) | ![Vignette](Sample/PP_04_Vignette.png) |
+
+| 05 · Sepia（复古棕褐） | 06 · Bright/Contrast（亮度对比度） |
+|:---:|:---:|
+| ![Sepia](Sample/PP_05_Sepia.png) | ![BrightContrast](Sample/PP_06_BrightContrast.png) |
+
+| 07 · Saturation Boost（饱和度增强） | 08 · RGB Split（色彩分离） |
+|:---:|:---:|
+| ![SatBoost](Sample/PP_07_SatBoost.png) | ![RGBSplit](Sample/PP_08_RGBSplit.png) |
+
+| 09 · Bleach Bypass（银残效果） | 10 · Old TV（老电视 CRT） |
+|:---:|:---:|
+| ![BleachBypass](Sample/PP_09_BleachBypass.png) | ![OldTV](Sample/PP_10_OldTV.png) |
+
+### 材质蓝图节点图
+
+| 01 · Desaturate | 02 · Warm Tint |
+|:---:|:---:|
+| ![Desaturate](Sample/BP_01_Desaturate.png) | ![WarmTint](Sample/BP_02_WarmTint.png) |
+
+| 03 · Invert | 04 · Vignette |
+|:---:|:---:|
+| ![Invert](Sample/BP_03_Invert.png) | ![Vignette](Sample/BP_04_Vignette.png) |
+
+| 05 · Sepia | 06 · Bright/Contrast |
+|:---:|:---:|
+| ![Sepia](Sample/BP_05_Sepia.png) | ![BrightContrast](Sample/BP_06_BrightContrast.png) |
+
+| 07 · Saturation Boost | 08 · RGB Split |
+|:---:|:---:|
+| ![SatBoost](Sample/BP_07_SatBoost.png) | ![RGBSplit](Sample/BP_08_RGBSplit.png) |
+
+| 09 · Bleach Bypass | 10 · Old TV |
+|:---:|:---:|
+| ![BleachBypass](Sample/BP_09_BleachBypass.png) | ![OldTV](Sample/BP_10_OldTV.png) |
+
 ## 环境要求
 
 - Unreal Engine 5.6+
@@ -268,6 +324,62 @@ Source/UECLI/
 │       └── UECLITextureGraphCommands.h   # TextureGraph commands
 └── Private/ (mirrors Public)
 ```
+
+## Example: One-Click Post-Processing Effects
+
+The `Create-PPEffects.ps1` script demonstrates UECLI's full automation pipeline: creating 10 post-processing materials, switching effects, and capturing screenshots — all without manual interaction. It showcases the complete chain: **Material Creation → Node Wiring → Compile → PPV Assignment → Screenshot**.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Plugins/UECLI/Scripts/Create-PPEffects.ps1
+```
+
+### Effect Gallery
+
+| Baseline | |
+|:---:|:---:|
+| ![Baseline](Sample/PP_00_Baseline.png) | |
+
+| 01 · Desaturate | 02 · Warm Tint |
+|:---:|:---:|
+| ![Desaturate](Sample/PP_01_Desaturate.png) | ![WarmTint](Sample/PP_02_WarmTint.png) |
+
+| 03 · Invert | 04 · Vignette |
+|:---:|:---:|
+| ![Invert](Sample/PP_03_Invert.png) | ![Vignette](Sample/PP_04_Vignette.png) |
+
+| 05 · Sepia | 06 · Bright/Contrast |
+|:---:|:---:|
+| ![Sepia](Sample/PP_05_Sepia.png) | ![BrightContrast](Sample/PP_06_BrightContrast.png) |
+
+| 07 · Saturation Boost | 08 · RGB Split |
+|:---:|:---:|
+| ![SatBoost](Sample/PP_07_SatBoost.png) | ![RGBSplit](Sample/PP_08_RGBSplit.png) |
+
+| 09 · Bleach Bypass | 10 · Old TV (CRT) |
+|:---:|:---:|
+| ![BleachBypass](Sample/PP_09_BleachBypass.png) | ![OldTV](Sample/PP_10_OldTV.png) |
+
+### Material Blueprint Node Graphs
+
+| 01 · Desaturate | 02 · Warm Tint |
+|:---:|:---:|
+| ![Desaturate](Sample/BP_01_Desaturate.png) | ![WarmTint](Sample/BP_02_WarmTint.png) |
+
+| 03 · Invert | 04 · Vignette |
+|:---:|:---:|
+| ![Invert](Sample/BP_03_Invert.png) | ![Vignette](Sample/BP_04_Vignette.png) |
+
+| 05 · Sepia | 06 · Bright/Contrast |
+|:---:|:---:|
+| ![Sepia](Sample/BP_05_Sepia.png) | ![BrightContrast](Sample/BP_06_BrightContrast.png) |
+
+| 07 · Saturation Boost | 08 · RGB Split |
+|:---:|:---:|
+| ![SatBoost](Sample/BP_07_SatBoost.png) | ![RGBSplit](Sample/BP_08_RGBSplit.png) |
+
+| 09 · Bleach Bypass | 10 · Old TV |
+|:---:|:---:|
+| ![BleachBypass](Sample/BP_09_BleachBypass.png) | ![OldTV](Sample/BP_10_OldTV.png) |
 
 ## Requirements
 

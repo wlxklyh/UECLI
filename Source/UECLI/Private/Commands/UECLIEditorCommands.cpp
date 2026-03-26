@@ -16,6 +16,7 @@
 #include "Engine/PointLight.h"
 #include "Engine/SpotLight.h"
 #include "Camera/CameraActor.h"
+#include "Engine/PostProcessVolume.h"
 #include "Components/StaticMeshComponent.h"
 #include "EditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
@@ -24,6 +25,10 @@
 #include "LevelEditorSubsystem.h"
 #include "Misc/PackageName.h"
 #include "ToolRegistry/UECLIToolRegistry.h"
+#include "LevelEditor.h"
+#include "SLevelViewport.h"
+#include "Framework/Application/SlateApplication.h"
+#include "RenderingThread.h"
 
 namespace
 {
@@ -75,6 +80,7 @@ void FUECLIEditorCommands::RegisterTools(FUECLIToolRegistry& Registry)
 	RegisterEditorCommand(Registry, TEXT("open_level"));
 	RegisterEditorCommand(Registry, TEXT("save_current_level"));
 	RegisterEditorCommand(Registry, TEXT("create_new_level"));
+	RegisterEditorCommand(Registry, TEXT("set_ppv_material"));
 }
 
 TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -174,7 +180,11 @@ TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleCommand(const FString& Comma
     {
         return HandleCreateNewLevel(Params);
     }
-    
+    else if (CommandType == TEXT("set_ppv_material"))
+    {
+        return HandleSetPPVMaterial(Params);
+    }
+
     return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
 }
 
@@ -313,6 +323,17 @@ TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleSpawnActor(const TSharedPtr<
     else if (ActorType == TEXT("CameraActor"))
     {
         NewActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Location, Rotation, SpawnParams);
+    }
+    else if (ActorType == TEXT("PostProcessVolume"))
+    {
+        APostProcessVolume* PPV = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), Location, Rotation, SpawnParams);
+        NewActor = PPV;
+        if (PPV)
+        {
+            PPV->bUnbound = true;
+            PPV->bEnabled = true;
+            PPV->BlendWeight = 1.0f;
+        }
     }
     else
     {
@@ -658,35 +679,125 @@ TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleTakeScreenshot(const TShared
     {
         return FUECLICommonUtils::CreateErrorResponse(TEXT("Missing 'filepath' or 'filename' parameter"));
     }
-    
+
     // Ensure the file path has a proper extension
     if (!FilePath.EndsWith(TEXT(".png")))
     {
         FilePath += TEXT(".png");
     }
 
-    // Get the active viewport
-    if (GEditor && GEditor->GetActiveViewport())
+    // Get the level editor viewport (more reliable than GEditor->GetActiveViewport())
+    FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+    TSharedPtr<IAssetViewport> ActiveLevelViewport = LevelEditorModule.GetFirstActiveViewport();
+    if (!ActiveLevelViewport.IsValid())
     {
-        FViewport* Viewport = GEditor->GetActiveViewport();
-        TArray<FColor> Bitmap;
-        FIntRect ViewportRect(0, 0, Viewport->GetSizeXY().X, Viewport->GetSizeXY().Y);
-        
-        if (Viewport->ReadPixels(Bitmap, FReadSurfaceDataFlags(), ViewportRect))
-        {
-            TArray64<uint8> CompressedBitmap;
-            FImageUtils::PNGCompressImageArray(Viewport->GetSizeXY().X, Viewport->GetSizeXY().Y, Bitmap, CompressedBitmap);
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("No active level editor viewport found"));
+    }
 
-            if (FFileHelper::SaveArrayToFile(CompressedBitmap, *FilePath))
+    FViewport* Viewport = ActiveLevelViewport->GetActiveViewport();
+    if (!Viewport || Viewport->GetSizeXY().X == 0 || Viewport->GetSizeXY().Y == 0)
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("Viewport has zero size or is invalid"));
+    }
+
+    // Two-phase capture:
+    // Phase 1: Force the viewport to render a fresh frame (with any PP effects applied).
+    //          Viewport->Draw(true) renders the scene and presents to the backbuffer.
+    // Phase 2: Use Slate TakeScreenshot to capture the window (including the fresh viewport).
+    //          This is the same mechanism UE uses in ProcessScreenShots CAPTURE PATH 1.
+    for (int32 i = 0; i < 4; i++)
+    {
+        Viewport->Draw(true);
+        FlushRenderingCommands();
+    }
+
+    // Find the target window.
+    // - Default: first (main) window
+    // - "window" param: match by window title substring (e.g. material name)
+    // - "window_index" param: pick by index in visible windows list
+    TSharedPtr<SWindow> Window;
+    TArray<TSharedRef<SWindow>> AllWindows;
+    FSlateApplication::Get().GetAllVisibleWindowsOrdered(AllWindows);
+
+    FString WindowMatch;
+    int32 WindowIndex = -1;
+    Params->TryGetStringField(TEXT("window"), WindowMatch);
+    if (Params->HasField(TEXT("window_index")))
+    {
+        WindowIndex = static_cast<int32>(Params->GetNumberField(TEXT("window_index")));
+    }
+
+    if (!WindowMatch.IsEmpty())
+    {
+        // Find window by title substring match
+        for (const TSharedRef<SWindow>& W : AllWindows)
+        {
+            FString Title = W->GetTitle().ToString();
+            if (Title.Contains(WindowMatch))
             {
-                TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-                ResultObj->SetStringField(TEXT("filepath"), FilePath);
-                return ResultObj;
+                Window = W;
+                break;
             }
         }
+        if (!Window.IsValid())
+        {
+            // Build list of available window titles for error message
+            TArray<FString> Titles;
+            for (const TSharedRef<SWindow>& W : AllWindows)
+            {
+                Titles.Add(W->GetTitle().ToString());
+            }
+            return FUECLICommonUtils::CreateErrorResponse(FString::Printf(
+                TEXT("No window matching '%s'. Available: [%s]"),
+                *WindowMatch, *FString::Join(Titles, TEXT(", "))));
+        }
     }
-    
-    return FUECLICommonUtils::CreateErrorResponse(TEXT("Failed to take screenshot"));
+    else if (WindowIndex >= 0 && WindowIndex < AllWindows.Num())
+    {
+        Window = AllWindows[WindowIndex];
+    }
+    else if (AllWindows.Num() > 0)
+    {
+        // Default: first (main) window
+        Window = AllWindows[0];
+    }
+
+    if (!Window.IsValid())
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("No visible Slate window found"));
+    }
+
+    TArray<FColor> Bitmap;
+    FIntVector Size;
+    if (!FSlateApplication::Get().TakeScreenshot(Window.ToSharedRef(), Bitmap, Size))
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("Slate TakeScreenshot failed"));
+    }
+
+    if (Size.X <= 0 || Size.Y <= 0 || Bitmap.Num() == 0)
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("Screenshot produced empty bitmap"));
+    }
+
+    // Ensure alpha is opaque
+    for (FColor& Color : Bitmap)
+    {
+        Color.A = 255;
+    }
+
+    TArray64<uint8> CompressedBitmap;
+    FImageUtils::PNGCompressImageArray(Size.X, Size.Y, Bitmap, CompressedBitmap);
+
+    if (FFileHelper::SaveArrayToFile(CompressedBitmap, *FilePath))
+    {
+        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+        ResultObj->SetStringField(TEXT("filepath"), FilePath);
+        ResultObj->SetNumberField(TEXT("width"), Size.X);
+        ResultObj->SetNumberField(TEXT("height"), Size.Y);
+        return ResultObj;
+    }
+
+    return FUECLICommonUtils::CreateErrorResponse(TEXT("Failed to save screenshot file"));
 }
 
 TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleSelectActor(const TSharedPtr<FJsonObject>& Params)
@@ -981,4 +1092,65 @@ AActor* FUECLIEditorCommands::FindActorByName(const FString& ActorName)
     }
 
     return nullptr;
+}
+
+TSharedPtr<FJsonObject> FUECLIEditorCommands::HandleSetPPVMaterial(const TSharedPtr<FJsonObject>& Params)
+{
+    FString ActorName;
+    if (!Params->TryGetStringField(TEXT("name"), ActorName))
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+    }
+
+    FString MaterialPath;
+    if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+    {
+        return FUECLICommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+    }
+
+    float Weight = 1.0f;
+    Params->TryGetNumberField(TEXT("weight"), Weight);
+
+    int32 SlotIndex = 0;
+    Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+
+    AActor* Actor = FindActorByName(ActorName);
+    if (!Actor)
+    {
+        return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor not found: %s"), *ActorName));
+    }
+
+    APostProcessVolume* PPV = Cast<APostProcessVolume>(Actor);
+    if (!PPV)
+    {
+        return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Actor '%s' is not a PostProcessVolume"), *ActorName));
+    }
+
+    UObject* MaterialObj = LoadObject<UObject>(nullptr, *MaterialPath);
+    if (!MaterialObj)
+    {
+        return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to load material: %s"), *MaterialPath));
+    }
+
+    FWeightedBlendable Blendable;
+    Blendable.Weight = Weight;
+    Blendable.Object = MaterialObj;
+
+    TArray<FWeightedBlendable>& BlendableArray = PPV->Settings.WeightedBlendables.Array;
+    if (SlotIndex >= 0 && SlotIndex < BlendableArray.Num())
+    {
+        BlendableArray[SlotIndex] = Blendable;
+    }
+    else
+    {
+        BlendableArray.Empty();
+        BlendableArray.Add(Blendable);
+    }
+
+    TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+    Data->SetStringField(TEXT("actor"), ActorName);
+    Data->SetStringField(TEXT("material_path"), MaterialPath);
+    Data->SetNumberField(TEXT("weight"), Weight);
+    Data->SetNumberField(TEXT("blendable_count"), BlendableArray.Num());
+    return FUECLICommonUtils::CreateSuccessResponse(Data);
 }

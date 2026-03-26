@@ -31,6 +31,10 @@
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialExpressionComment.h"
+#include "Materials/MaterialExpressionSceneTexture.h"
+#include "Materials/MaterialExpressionDesaturation.h"
+#include "Materials/MaterialExpressionScreenPosition.h"
+#include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionAppendVector.h"
@@ -551,7 +555,11 @@ namespace
 			{TEXT("objectpositionws"), UMaterialExpressionObjectPositionWS::StaticClass()},
 			{TEXT("vertexnormalws"), UMaterialExpressionVertexNormalWS::StaticClass()},
 			{TEXT("pixelnormalws"), UMaterialExpressionPixelNormalWS::StaticClass()},
-			{TEXT("vertexcolor"), UMaterialExpressionVertexColor::StaticClass()}
+			{TEXT("vertexcolor"), UMaterialExpressionVertexColor::StaticClass()},
+			{TEXT("scenetexture"), UMaterialExpressionSceneTexture::StaticClass()},
+			{TEXT("desaturation"), UMaterialExpressionDesaturation::StaticClass()},
+			{TEXT("screenposition"), UMaterialExpressionScreenPosition::StaticClass()},
+			{TEXT("custom"), UMaterialExpressionCustom::StaticClass()}
 		};
 
 		FString Normalized = NodeType;
@@ -1015,6 +1023,7 @@ void FUECLIMaterialCommands::RegisterTools(FUECLIToolRegistry& Registry)
 	RegisterMaterialCommand(Registry, TEXT("create_material_scaffold"));
 	RegisterMaterialCommand(Registry, TEXT("apply_material_to_actor"));
 	RegisterMaterialCommand(Registry, TEXT("get_opened_material"));
+	RegisterMaterialCommand(Registry, TEXT("open_material_editor"));
 	RegisterMaterialCommand(Registry, TEXT("get_material_nodes"));
 	RegisterMaterialCommand(Registry, TEXT("get_material_connections"));
 	RegisterMaterialCommand(Registry, TEXT("create_material_node"));
@@ -1093,6 +1102,10 @@ TSharedPtr<FJsonObject> FUECLIMaterialCommands::HandleCommand(const FString& Com
     else if (CommandType == TEXT("get_opened_material"))
     {
         return HandleGetOpenedMaterial(Params);
+    }
+    else if (CommandType == TEXT("open_material_editor"))
+    {
+        return HandleOpenMaterialEditor(Params);
     }
     else if (CommandType == TEXT("get_material_nodes"))
     {
@@ -2317,6 +2330,60 @@ TSharedPtr<FJsonObject> FUECLIMaterialCommands::HandleGetOpenedMaterial(const TS
     }
 
     return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FUECLIMaterialCommands::HandleOpenMaterialEditor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString MaterialPath;
+	if (!TryGetMaterialPath(Params, MaterialPath))
+	{
+		return FUECLICommonUtils::CreateErrorResponse(TEXT("Missing 'material_path' parameter"));
+	}
+
+	UObject* Asset = LoadObject<UObject>(nullptr, *MaterialPath);
+	if (!Asset)
+	{
+		return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Material not found: %s"), *MaterialPath));
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		return FUECLICommonUtils::CreateErrorResponse(TEXT("Failed to get AssetEditorSubsystem"));
+	}
+
+	bool bOpened = AssetEditorSubsystem->OpenEditorForAsset(Asset);
+	if (!bOpened)
+	{
+		return FUECLICommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to open editor for: %s"), *MaterialPath));
+	}
+
+	// Optionally focus the editor window
+	bool bFocus = true;
+	Params->TryGetBoolField(TEXT("focus"), bFocus);
+	if (bFocus)
+	{
+		// Find and focus the material editor window
+		TArray<TSharedRef<SWindow>> AllWindows;
+		FSlateApplication::Get().GetAllVisibleWindowsOrdered(AllWindows);
+		FString AssetName = Asset->GetName();
+		for (const TSharedRef<SWindow>& Window : AllWindows)
+		{
+			FString Title = Window->GetTitle().ToString();
+			if (Title.Contains(AssetName))
+			{
+				Window->BringToFront();
+				FSlateApplication::Get().SetAllUserFocus(Window, EFocusCause::SetDirectly);
+				break;
+			}
+		}
+	}
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetStringField(TEXT("material_path"), MaterialPath);
+	ResultObj->SetStringField(TEXT("material_name"), Asset->GetName());
+	ResultObj->SetBoolField(TEXT("opened"), true);
+	return ResultObj;
 }
 
 TSharedPtr<FJsonObject> FUECLIMaterialCommands::HandleGetMaterialNodes(const TSharedPtr<FJsonObject>& Params)
